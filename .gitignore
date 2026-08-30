@@ -1,0 +1,32 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.egg-info/
+build/
+dist/
+
+# Secrets / environment (never commit real keys)
+.env
+.env.bak
+.env.local
+.env.*.local
+.env.test
+!.env.example
+
+# Runtime data / user uploads
+chroma_db/
+uploads/
+*.log
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Tooling artifacts
+skills-lock.json
+.agents/

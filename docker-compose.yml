@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    volumes:
+  - ./chroma_db:/app/chroma_db
+    container_name: ai-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16
+    container_name: fastapi-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      
+  
+
+  redis:
+    image: redis:7-alpine
+    container_name: ai-app-redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
