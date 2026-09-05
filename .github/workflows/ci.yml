@@ -57,10 +57,28 @@ jobs:
           pip show starlette
           pip show fastapi
 
+            - name: Wait for services
+        run: |
+          python - <<'EOF'
+          import socket
+          import time
+
+          for host, port in [("localhost", 5432), ("localhost", 6379)]:
+              for _ in range(60):
+                  try:
+                      with socket.create_connection((host, port), 2):
+                          break
+                  except OSError:
+                      time.sleep(1)
+              else:
+                  raise SystemExit(f"{host}:{port} not reachable")
+          EOF
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql://fawad:testpassword@localhost:5432/aiappdb_test
         run: |
+          alembic upgrade head
           pytest
 
       - name: Log in to GitHub Container Registry
