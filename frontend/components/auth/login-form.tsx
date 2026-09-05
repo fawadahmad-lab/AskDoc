@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -8,6 +9,7 @@ import { z } from "zod";
 import { ArrowRight, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Form,
   FormControl,
@@ -18,10 +20,11 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { PasswordInput } from "@/components/auth/password-input";
-import { login } from "@/lib/api";
+import { SocialButtons } from "@/components/auth/social-buttons";
+import { login, ApiError } from "@/lib/api";
 
 const loginSchema = z.object({
-  username: z.string().min(1, "Username is required"),
+  username: z.string().min(1, "Username or email is required"),
   password: z.string().min(1, "Password is required"),
 });
 
@@ -30,6 +33,7 @@ type LoginValues = z.infer<typeof loginSchema>;
 export function LoginForm() {
   const router = useRouter();
   const [error, setError] = React.useState<string | null>(null);
+  const [remember, setRemember] = React.useState(true);
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
@@ -46,28 +50,34 @@ export function LoginForm() {
       await login({
         username: values.username,
         password: values.password,
+        remember,
       });
       router.replace("/chat");
       router.refresh();
     } catch (e) {
+      // Backend returns 403 for a registered but unverified account.
+      if (e instanceof ApiError && e.status === 403) {
+        router.replace("/verify-email?reason=unverified");
+        return;
+      }
       setError(e instanceof Error ? e.message : "Login failed");
     }
   }
 
   return (
     <Form {...form}>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-5">
+      <form onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-5">
         <FormField
           control={form.control}
           name="username"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Username</FormLabel>
+              <FormLabel>Email or username</FormLabel>
               <FormControl>
                 <Input
                   placeholder="you@example.com"
                   autoComplete="username"
-                  className="h-11 rounded-xl"
+                  className="h-12 rounded-xl bg-white shadow-xs dark:bg-input/30"
                   {...field}
                 />
               </FormControl>
@@ -81,9 +91,7 @@ export function LoginForm() {
           name="password"
           render={({ field }) => (
             <FormItem>
-              <div className="flex items-center justify-between">
-                <FormLabel>Password</FormLabel>
-              </div>
+              <FormLabel>Password</FormLabel>
               <FormControl>
                 <PasswordInput
                   placeholder="••••••••"
@@ -97,6 +105,26 @@ export function LoginForm() {
           )}
         />
 
+        <div className="flex items-center justify-between">
+          <label
+            htmlFor="remember-me"
+            className="flex cursor-pointer select-none items-center gap-2.5 text-sm text-muted-foreground"
+          >
+            <Checkbox
+              id="remember-me"
+              checked={remember}
+              onCheckedChange={(v) => setRemember(v === true)}
+            />
+            Remember me
+          </label>
+          <Link
+            href="/forgot-password"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
+
         {error && (
           <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
@@ -107,7 +135,7 @@ export function LoginForm() {
           type="submit"
           size="lg"
           disabled={isSubmitting}
-          className="h-11 w-full rounded-xl text-[15px] font-medium"
+          className="mt-1 h-12 w-full rounded-xl bg-indigo-600 text-[15px] font-medium text-white shadow-sm hover:bg-indigo-700"
         >
           {isSubmitting ? (
             <>
@@ -121,6 +149,8 @@ export function LoginForm() {
             </>
           )}
         </Button>
+
+        <SocialButtons />
       </form>
     </Form>
   );

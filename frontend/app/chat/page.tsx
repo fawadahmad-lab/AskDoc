@@ -1,6 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { Composer } from "@/components/chat/composer";
 import { MessageThread } from "@/components/chat/message-thread";
@@ -8,7 +10,29 @@ import { useChat } from "@/components/chat/chat-context";
 import { Loader2 } from "lucide-react";
 
 export default function ChatPage() {
-  const { send, isBusy, startNewChat, isLoadingConversation } = useChat();
+  return (
+    <Suspense fallback={<ChatPageContent />}>
+      <ChatPageWithParams />
+    </Suspense>
+  );
+}
+
+function ChatPageWithParams() {
+  const { openConversation, startNewChat } = useChat();
+  const searchParams = useSearchParams();
+
+  const target = searchParams.get("conversation");
+
+  // Deep-link from the Library: open the requested conversation.
+  React.useEffect(() => {
+    if (target) {
+      const id = Number(target);
+      if (Number.isInteger(id) && id > 0) {
+        openConversation(id);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
 
   React.useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -19,7 +43,14 @@ export default function ChatPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [startNewChat]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return <ChatPageContent />;
+}
+
+function ChatPageContent() {
+  const { send, isBusy, isLoadingConversation } = useChat();
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">

@@ -2,9 +2,13 @@
 
 from app.schemas.auth import (
     UserCreate,
-    UserLogin,
+    GroqKeyUpdate,
     TokenResponse,
     UserResponse,
+    VerifyEmailRequest,
+    ResendVerificationRequest,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
 )
 from app.schemas.chat import (
     ChatRequest,
@@ -21,9 +25,13 @@ from app.schemas.conversation import (
 
 __all__ = [
     "UserCreate",
-    "UserLogin",
+    "GroqKeyUpdate",
     "TokenResponse",
     "UserResponse",
+    "VerifyEmailRequest",
+    "ResendVerificationRequest",
+    "ForgotPasswordRequest",
+    "ResetPasswordRequest",
     "ChatRequest",
     "ChatResponse",
     "CitationResponse",

@@ -1,6 +1,6 @@
 """RAG chat route."""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.cache import (
@@ -12,10 +12,23 @@ from app.core.deps import get_current_user
 from app.db.base import get_db
 from app.db import models
 from app.db.repos import conversation as conversation_repo
-from app.rag import answer_question
+from app.db.repos import user as user_repo
+from app.rag import run_rag_pipeline
+from app.rag.generation import is_refusal_answer
 from app.schemas import ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
+
+
+def _strip_citations_on_refusal(response: dict) -> dict:
+    """Ensure a refusal answer never carries citations.
+
+    Guards against stale cached responses (cached before refusals returned
+    empty citations) leaking source pages on out-of-domain questions.
+    """
+    if is_refusal_answer(response.get("answer", "")):
+        response["citations"] = []
+    return response
 
 
 @router.post("", response_model=ChatResponse)
@@ -30,6 +43,16 @@ def chat(
     automatically. The user's question and the assistant's answer are
     persisted to the active conversation.
     """
+    groq_api_key = user_repo.get_user_groq_key(db, current_user)
+    if not groq_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No Groq API key on your account. Add one in "
+                "Settings so answers can be generated."
+            ),
+        )
+
     conversation_id = request.conversation_id
     if conversation_id is None:
         title = request.question.strip()[:50]
@@ -65,6 +88,7 @@ def chat(
     cached_response = get_cached_response(cache_key)
 
     if cached_response:
+        cached_response = _strip_citations_on_refusal(cached_response)
         cached_response["cached"] = True
         cached_response["conversation_id"] = conversation_id
 
@@ -90,12 +114,15 @@ def chat(
         conversation_id,
     )
 
-    response = answer_question(
+    response = run_rag_pipeline(
         question=request.question,
         user_id=current_user.id,
         document_id=request.document_id,
         history=history,
+        groq_api_key=groq_api_key,
     )
+
+    response = _strip_citations_on_refusal(response)
 
     response["cached"] = False
     response["conversation_id"] = conversation_id

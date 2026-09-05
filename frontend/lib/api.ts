@@ -11,11 +11,17 @@ export type SignupInput = {
   email: string;
   username: string;
   password: string;
+  groqApiKey: string;
 };
 
 export type LoginInput = {
   username: string;
   password: string;
+  remember?: boolean;
+};
+
+export type GroqKeyUpdateInput = {
+  groqApiKey: string;
 };
 
 export type DocumentResponse = {
@@ -110,8 +116,9 @@ async function handle<T>(res: Response): Promise<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * Sign up. The BFF signs the user in and sets the httpOnly session cookie.
- * Returns the created user.
+ * Sign up. The account starts unverified — the backend emails a 6-digit code
+ * the user must confirm on /verify-email before they can sign in.
+ * Returns the created (unverified) user.
  */
 export async function signup(input: SignupInput): Promise<User> {
   const res = await fetch(`${BASE}/auth/signup`, {
@@ -121,6 +128,60 @@ export async function signup(input: SignupInput): Promise<User> {
   });
   const body = await handle<AuthResponse>(res);
   return body.user;
+}
+
+/** Confirm a 6-digit code emailed at signup to activate the account. */
+export async function verifyEmail(input: {
+  email: string;
+  code: string;
+}): Promise<User> {
+  const res = await fetch(`${BASE}/auth/verify-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = await handle<AuthResponse>(res);
+  return body.user;
+}
+
+/** Request a fresh verification code (resend link on the verify page). */
+export async function resendVerification(input: {
+  email: string;
+}): Promise<{ detail: string }> {
+  const res = await fetch(`${BASE}/auth/resend-verification`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return handle<{ detail: string }>(res);
+}
+
+/** Request a password-reset email. Always returns a generic success message. */
+export async function forgotPassword(input: {
+  email: string;
+}): Promise<{ detail: string }> {
+  const res = await fetch(`${BASE}/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  return handle<{ detail: string }>(res);
+}
+
+/** Set a new password with a single-use token from the reset email. */
+export async function resetPassword(input: {
+  token: string;
+  newPassword: string;
+}): Promise<{ detail: string }> {
+  const res = await fetch(`${BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      token: input.token,
+      new_password: input.newPassword,
+    }),
+  });
+  return handle<{ detail: string }>(res);
 }
 
 /**
@@ -155,6 +216,22 @@ export async function logout(): Promise<void> {
     method: "POST",
   });
   await handle<void>(res);
+}
+
+/**
+ * Replace the current user's Groq API key. The BFF verifies it against the
+ * backend (which live-checks it with Groq) before returning the updated user.
+ */
+export async function updateGroqApiKey(
+  input: GroqKeyUpdateInput
+): Promise<User> {
+  const res = await fetch(`${BASE}/auth/groq-key`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = await handle<AuthResponse>(res);
+  return body.user;
 }
 
 // ---------------------------------------------------------------------------

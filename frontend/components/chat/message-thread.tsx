@@ -60,18 +60,14 @@ function EmptyState() {
       </div>
       <div>
         <h2 className="font-heading text-2xl font-semibold tracking-tight">
-          Ask anything about your documents
+        Explore your documents and discover answers.
         </h2>
-        <p className="mx-auto mt-2 max-w-md text-[15px] text-muted-foreground">
-          Upload PDFs to your library, then ask questions. Answers are grounded
-          in your documents and come with page-level citations.
-        </p>
       </div>
       <div className="mt-2 flex flex-wrap justify-center gap-2 text-sm">
-        {["Summary", "Key numbers", "Quotes", "Comparisons"].map((s) => (
+        {["PDF upload", "Key numbers", "Quotes", "Comparisons"].map((s) => (
           <span
             key={s}
-            className="rounded-full border bg-card px-3.5 py-1.5 text-muted-foreground"
+            className="rounded-full border border-border bg-card px-3.5 py-1.5 text-muted-foreground"
           >
             {s}
           </span>

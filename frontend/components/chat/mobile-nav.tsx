@@ -11,12 +11,9 @@ import {
 } from "@/components/ui/sheet";
 import { SidebarInner } from "./sidebar";
 
-export function MobileNav({
-  onOpenLibrary,
-}: {
-  onOpenLibrary: () => void;
-}) {
+export function MobileNav() {
   const [open, setOpen] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(true);
 
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -32,7 +29,8 @@ export function MobileNav({
             onToggle={() => {
               /* collapse is desktop-only */
             }}
-            onOpenLibrary={onOpenLibrary}
+            historyOpen={historyOpen}
+            onHistoryToggle={() => setHistoryOpen((o) => !o)}
           />
         </div>
       </SheetContent>

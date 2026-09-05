@@ -1,0 +1,35 @@
+[
+    {
+        "question": "How many times had Pakistan availed IMF loan facilities since 1958?",
+        "answer": "Pakistan had availed IMF loan facilities 18 times since 1958.",
+        "contexts": [
+            "Since 1958, Pakistan has availed IMF facilities 18 times."
+        ],
+        "ground_truth": "Pakistan had availed IMF loan facilities 18 times since 1958."
+    },
+    {
+        "question": "Who won the 2022 FIFA World Cup?",
+        "answer": "I could not find an answer to your question in the provided documents.",
+        "contexts": [
+            "The document does not contain any information about the 2022 FIFA World Cup."
+        ],
+        "ground_truth": "The uploaded document does not contain information about the 2022 FIFA World Cup."
+    },
+    {
+        "question": "What is the conclusion of the document?",
+        "answer": "The document concludes that Pakistan's repeated IMF borrowing created dependency and had negative economic consequences.",
+        "contexts": [
+            "The document concludes that Pakistan's repeated IMF borrowing created dependency and had negative economic consequences, similar to Dutch disease."
+        ],
+        "ground_truth": "The document concludes that Pakistan's repeated IMF borrowing created dependency and had negative economic consequences."
+    },
+    {
+        "question": "Who is the author of the paper about the IMF and Pakistan's economy?",
+        "answer": "The author of the paper is Mian Abid Qayyum.",
+        "contexts": [
+            "The paper is written by Mian Abid Qayyum, Advocate, with degrees in Economics and Law."
+        ],
+        "ground_truth": "The author of the paper is Mian Abid Qayyum."
+    }
+  
+]

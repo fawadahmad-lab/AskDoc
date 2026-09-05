@@ -10,6 +10,7 @@ type UserContextValue = {
   user: User | null;
   isLoading: boolean;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 };
 
 const UserContext = React.createContext<UserContextValue | null>(null);
@@ -18,6 +19,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [user, setUser] = React.useState<User | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
+
+  const loadUser = React.useCallback(async () => {
+    try {
+      const u = await me();
+      setUser(u);
+    } catch {
+      setUser(null);
+    }
+  }, []);
 
   // Resolve identity from the httpOnly session cookie on mount. The token
   // never reaches the browser — this is the single source of truth for who
@@ -49,8 +59,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const value = React.useMemo<UserContextValue>(
-    () => ({ user, isLoading, logout: signOut }),
-    [user, isLoading, signOut]
+    () => ({ user, isLoading, logout: signOut, refreshUser: loadUser }),
+    [user, isLoading, signOut, loadUser]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

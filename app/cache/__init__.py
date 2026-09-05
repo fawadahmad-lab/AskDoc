@@ -5,6 +5,7 @@ from app.cache.ai_cache import (
     build_cache_key,
     get_cached_response,
     cache_response,
+    delete_user_cached_responses,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "build_cache_key",
     "get_cached_response",
     "cache_response",
+    "delete_user_cached_responses",
 ]

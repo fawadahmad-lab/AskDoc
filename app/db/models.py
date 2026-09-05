@@ -21,7 +21,32 @@ class User(Base):
     email = Column(String, unique=True, nullable=False, index=True)
     username = Column(String, unique=True, nullable=False, index=True)
     hashed_password = Column(String, nullable=False)
+    groq_api_key_enc = Column(Text, nullable=True)
+    email_verified_at = Column(DateTime(timezone=True), nullable=True)
+    verify_code_hash = Column(String, nullable=True)
+    verify_code_expires = Column(DateTime(timezone=True), nullable=True)
+    reset_token_hash = Column(String, nullable=True)
+    reset_token_expires = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def has_groq_api_key(self) -> bool:
+        return bool(self.groq_api_key_enc)
+
+    @property
+    def is_email_verified(self) -> bool:
+        return bool(self.email_verified_at)
+
+    @property
+    def groq_api_key_masked(self) -> str | None:
+        from app.core.crypto import decrypt_secret, mask_secret
+
+        if not self.groq_api_key_enc:
+            return None
+        try:
+            return mask_secret(decrypt_secret(self.groq_api_key_enc))
+        except ValueError:
+            return None
 
 
 class Document(Base):

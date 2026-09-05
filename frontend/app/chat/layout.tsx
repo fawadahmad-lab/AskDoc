@@ -7,7 +7,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Sidebar } from "@/components/chat/sidebar";
 import { MobileNav } from "@/components/chat/mobile-nav";
 import { ChatProvider } from "@/components/chat/chat-context";
-import { LibraryDrawer } from "@/components/chat/library-drawer";
 import { SessionProvider, useUser } from "@/lib/use-user";
 import { BrandWordmark } from "@/components/auth/brand-mark";
 
@@ -29,7 +28,6 @@ function AuthedChatLayout({
   children: React.ReactNode;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
-  const [libraryOpen, setLibraryOpen] = React.useState(false);
   const { user, isLoading } = useUser();
   const router = useRouter();
 
@@ -51,17 +49,11 @@ function AuthedChatLayout({
         <Sidebar
           collapsed={collapsed}
           onToggle={() => setCollapsed((c) => !c)}
-          onOpenLibrary={() => setLibraryOpen(true)}
         />
 
-        <LibraryDrawer
-          open={libraryOpen}
-          onOpenChange={setLibraryOpen}
-        />
-
-        <section className="flex min-w-0 flex-1 flex-col">
+        <section className="relative flex min-w-0 flex-1 flex-col">
           <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border/70 px-4">
-            <MobileNav onOpenLibrary={() => setLibraryOpen(true)} />
+            <MobileNav />
             {/* On tablets (collapsed hidden between md and lg) show brand */}
             <div className="flex items-center gap-2 lg:hidden">
               <BrandWordmark className="text-base" />

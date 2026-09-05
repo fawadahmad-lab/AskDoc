@@ -2,32 +2,71 @@ from dotenv import load_dotenv
 load_dotenv(".env.test")
 
 import uuid
+from unittest import mock
 
+import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.cache.redis import redis_client
 
-client = TestClient(app)
+# The app enforces a TrustedHost allowlist; TestClient's default "testserver"
+# host is not in it, so pin an allowed host for all requests.
+client = TestClient(app, headers={"Host": "localhost"})
+
+FAKE_GROQ_KEY = "gsk_" + "x" * 40
+
+
+@pytest.fixture(autouse=True)
+def _clean_redis():
+    """Start every test with a clean Redis.
+
+    The suite signs up many users; without a flush the fixed-window signup
+    rate limiter (10/hour by default) 429s later tests.
+    """
+    redis_client.flushdb()
+    yield
 
 
 def create_user_and_token():
-    """Create a unique user and return (user_id, username, token)."""
+    """Create an email-verified user and return (id, username, token)."""
     unique_id = uuid.uuid4().hex[:8]
     username = f"conv_user_{unique_id}"
-    email = f"conv_{unique_id}@example.com"
+    email = f"conv_{unique_id}@gmail.com"
     password = "testpassword123"
 
-    signup_response = client.post(
-        "/auth/signup",
-        json={
-            "email": email,
-            "username": username,
-            "password": password,
-        },
-    )
+    sent_codes: list[str] = []
+
+    def _spy_send_code(to, uname, code):
+        sent_codes.append(code)
+
+    # Live Groq verification is stubbed and the email code is captured, so the
+    # flow never depends on a real key or an inbox.
+    with (
+        mock.patch("app.api.routes.auth.verify_groq_key", return_value=True),
+        mock.patch(
+            "app.api.routes.auth.send_verification_code",
+            side_effect=_spy_send_code,
+        ),
+    ):
+        signup_response = client.post(
+            "/auth/signup",
+            json={
+                "email": email,
+                "username": username,
+                "password": password,
+                "groq_api_key": FAKE_GROQ_KEY,
+            },
+        )
     assert signup_response.status_code == 201
     user = signup_response.json()
     user_id = user["id"]
+    assert user["is_email_verified"] is False
+
+    verify_response = client.post(
+        "/auth/verify-email",
+        json={"email": email, "code": sent_codes[0]},
+    )
+    assert verify_response.status_code == 200
 
     login_response = client.post(
         "/auth/login",
@@ -36,7 +75,7 @@ def create_user_and_token():
     assert login_response.status_code == 200
     token = login_response.json()["access_token"]
 
-    return {"id": user_id, "token": token}
+    return {"id": user_id, "email": email, "username": username, "token": token}
 
 
 def test_get_conversations_without_authentication():
@@ -58,7 +97,350 @@ def test_auth_me():
     assert body["id"] == user["id"]
     assert "email" in body
     assert "username" in body
+    assert body["is_email_verified"] is True
     assert "hashed_password" not in body
+    # Per-user Groq key is never returned in full — only masked.
+    assert body["has_groq_api_key"] is True
+    assert body["groq_api_key_masked"].startswith("••••")
+    assert FAKE_GROQ_KEY not in str(body)
+
+
+def test_login_remember_me_issues_long_lived_token():
+    from datetime import datetime, timezone
+
+    from app.core.security import decode_access_token
+
+    user = create_user_and_token()
+
+    session_login = client.post(
+        "/auth/login",
+        data={
+            "username": user["username"],
+            "password": "testpassword123",
+            "remember_me": "false",
+        },
+    )
+    remember_login = client.post(
+        "/auth/login",
+        data={
+            "username": user["username"],
+            "password": "testpassword123",
+            "remember_me": "true",
+        },
+    )
+    assert session_login.status_code == 200
+    assert remember_login.status_code == 200
+
+    now = datetime.now(timezone.utc).timestamp()
+    session_ttl = (
+        decode_access_token(session_login.json()["access_token"])["exp"] - now
+    )
+    remember_ttl = (
+        decode_access_token(remember_login.json()["access_token"])["exp"] - now
+    )
+
+    # Default session stays short (~30 min); remember-me lasts for days.
+    assert 25 * 60 < session_ttl < 60 * 60
+    assert remember_ttl > 24 * 60 * 60
+
+
+def test_signup_rejects_malformed_groq_key():
+    response = client.post(
+        "/auth/signup",
+        json={
+            "email": "bad_key@gmail.com",
+            "username": "bad_key_user",
+            "password": "testpassword123",
+            "groq_api_key": "not-a-groq-key",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_signup_rejects_non_allowed_email_domain():
+    with mock.patch("app.api.routes.auth.verify_groq_key", return_value=True):
+        response = client.post(
+            "/auth/signup",
+            json={
+                "email": "someone@hotmail.com",
+                "username": "hotmail_user",
+                "password": "testpassword123",
+                "groq_api_key": FAKE_GROQ_KEY,
+            },
+        )
+
+    assert response.status_code == 400
+    assert "Google" in response.json()["detail"]
+
+
+def test_signup_normalizes_gmail_aliases_and_blocks_duplicate():
+    # Dots, case and +tags all resolve to the same Gmail mailbox.
+    unq = uuid.uuid4().hex[:8]
+    email_a = f"John.{unq}+shopping@GMAIL.com"
+    email_b = f"john{unq}@gmail.com"
+    canonical = f"john{unq}@gmail.com"
+
+    with mock.patch("app.api.routes.auth.verify_groq_key", return_value=True):
+        first = client.post(
+            "/auth/signup",
+            json={
+                "email": email_a,
+                "username": f"jdoe_first_{unq}",
+                "password": "testpassword123",
+                "groq_api_key": FAKE_GROQ_KEY,
+            },
+        )
+    assert first.status_code == 201
+    assert first.json()["email"] == canonical
+
+    with mock.patch("app.api.routes.auth.verify_groq_key", return_value=True):
+        duplicate = client.post(
+            "/auth/signup",
+            json={
+                "email": email_b,
+                "username": f"jdoe_second_{unq}",
+                "password": "testpassword123",
+                "groq_api_key": FAKE_GROQ_KEY,
+            },
+        )
+    assert duplicate.status_code == 409
+
+
+def test_login_blocked_until_email_verified():
+    unique_id = uuid.uuid4().hex[:8]
+    username = f"unverified_{unique_id}"
+    email = f"unverified_{unique_id}@gmail.com"
+    password = "testpassword123"
+
+    with (
+        mock.patch("app.api.routes.auth.verify_groq_key", return_value=True),
+        mock.patch(
+            "app.api.routes.auth.send_verification_code", return_value=None
+        ),
+    ):
+        signup = client.post(
+            "/auth/signup",
+            json={
+                "email": email,
+                "username": username,
+                "password": password,
+                "groq_api_key": FAKE_GROQ_KEY,
+            },
+        )
+    assert signup.status_code == 201
+
+    # Login is blocked until the code is confirmed.
+    login = client.post(
+        "/auth/login",
+        data={"username": username, "password": password},
+    )
+    assert login.status_code == 403
+    assert "verified" in login.json()["detail"].lower()
+
+
+def test_verify_email_rejects_wrong_code_then_accepts_correct():
+    unique_id = uuid.uuid4().hex[:8]
+    username = f"verify_{unique_id}"
+    email = f"verify_{unique_id}@gmail.com"
+    password = "testpassword123"
+    sent_codes: list[str] = []
+
+    with (
+        mock.patch("app.api.routes.auth.verify_groq_key", return_value=True),
+        mock.patch(
+            "app.api.routes.auth.send_verification_code",
+            side_effect=lambda to, uname, code: sent_codes.append(code),
+        ),
+    ):
+        signup = client.post(
+            "/auth/signup",
+            json={
+                "email": email,
+                "username": username,
+                "password": password,
+                "groq_api_key": FAKE_GROQ_KEY,
+            },
+        )
+    assert signup.status_code == 201
+
+    wrong = client.post(
+        "/auth/verify-email",
+        json={"email": email, "code": "000000"},
+    )
+    assert wrong.status_code == 400
+
+    correct = client.post(
+        "/auth/verify-email",
+        json={"email": email, "code": sent_codes[0]},
+    )
+    assert correct.status_code == 200
+    assert correct.json()["is_email_verified"] is True
+
+    login = client.post(
+        "/auth/login",
+        data={"username": username, "password": password},
+    )
+    assert login.status_code == 200
+
+
+def test_resend_verification_sends_fresh_code():
+    unique_id = uuid.uuid4().hex[:8]
+    username = f"resend_{unique_id}"
+    email = f"resend_{unique_id}@gmail.com"
+    password = "testpassword123"
+    sent_codes: list[str] = []
+
+    def _spy(to, uname, code):
+        sent_codes.append(code)
+
+    with (
+        mock.patch("app.api.routes.auth.verify_groq_key", return_value=True),
+        mock.patch(
+            "app.api.routes.auth.send_verification_code", side_effect=_spy
+        ),
+    ):
+        signup = client.post(
+            "/auth/signup",
+            json={
+                "email": email,
+                "username": username,
+                "password": password,
+                "groq_api_key": FAKE_GROQ_KEY,
+            },
+        )
+    assert signup.status_code == 201
+    original_code = sent_codes[0]
+    sent_codes.clear()
+
+    with mock.patch(
+        "app.api.routes.auth.send_verification_code", side_effect=_spy
+    ):
+        resend = client.post(
+            "/auth/resend-verification",
+            json={"email": email},
+        )
+    assert resend.status_code == 200
+    assert len(sent_codes) == 1
+    assert sent_codes[0] != original_code
+
+    # The fresh code works (old code is a hash overwrite, not an append).
+    verify = client.post(
+        "/auth/verify-email",
+        json={"email": email, "code": sent_codes[0]},
+    )
+    assert verify.status_code == 200
+
+
+def test_forgot_password_reset_flow_and_single_use():
+    user = create_user_and_token()
+    reset_urls: list[str] = []
+
+    def _spy_reset(to, uname, reset_url):
+        reset_urls.append(reset_url)
+
+    with mock.patch(
+        "app.api.routes.auth.send_password_reset", side_effect=_spy_reset
+    ):
+        response = client.post(
+            "/auth/forgot-password",
+            json={"email": user["email"]},
+        )
+    assert response.status_code == 200
+    assert "sent" in response.json()["detail"].lower()
+    assert len(reset_urls) == 1
+    token = reset_urls[0].split("token=")[1]
+
+    new_password = "newpassword456"
+    reset = client.post(
+        "/auth/reset-password",
+        json={"token": token, "new_password": new_password},
+    )
+    assert reset.status_code == 200
+
+    # Old password fails, new password works.
+    assert client.post(
+        "/auth/login",
+        data={"username": user["username"], "password": "testpassword123"},
+    ).status_code == 401
+
+    assert client.post(
+        "/auth/login",
+        data={"username": user["username"], "password": new_password},
+    ).status_code == 200
+
+    # The token is single-use.
+    assert client.post(
+        "/auth/reset-password",
+        json={"token": token, "new_password": "anotherpass789"},
+    ).status_code == 400
+
+
+def test_forgot_password_does_not_leak_registered_emails():
+    response = client.post(
+        "/auth/forgot-password",
+        json={"email": "nobody@gmail.com"},
+    )
+    assert response.status_code == 200
+    assert "If an account exists" in response.json()["detail"]
+
+
+def test_update_groq_api_key():
+    user = create_user_and_token()
+    headers = {"Authorization": f"Bearer {user['token']}"}
+
+    new_key = "gsk_" + "y" * 40
+    with mock.patch("app.api.routes.auth.verify_groq_key", return_value=True):
+        response = client.put(
+            "/auth/me/groq-api-key",
+            json={"groq_api_key": new_key},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["has_groq_api_key"] is True
+    assert body["groq_api_key_masked"].endswith(new_key[-4:])
+    assert new_key not in str(body)
+
+
+def test_update_groq_api_key_rejects_bad_key():
+    user = create_user_and_token()
+    headers = {"Authorization": f"Bearer {user['token']}"}
+
+    with mock.patch("app.api.routes.auth.verify_groq_key", return_value=False):
+        response = client.put(
+            "/auth/me/groq-api-key",
+            json={"groq_api_key": FAKE_GROQ_KEY},
+            headers=headers,
+        )
+
+    assert response.status_code == 400
+
+
+def test_chat_requires_groq_key():
+    # A user whose stored key cannot be decrypted/missing is rejected with a
+    # clear message instead of a 500.
+    user = create_user_and_token()
+    headers = {"Authorization": f"Bearer {user['token']}"}
+
+    # Simulate a user without a key by clearing the encrypted column.
+    from app.db.base import SessionLocal
+    from app.db import models
+
+    with SessionLocal() as db:
+        db_user = db.get(models.User, user["id"])
+        db_user.groq_api_key_enc = None
+        db.commit()
+
+    response = client.post(
+        "/chat",
+        json={"question": "Hello"},
+        headers=headers,
+    )
+
+    assert response.status_code == 400
+    assert "Groq API key" in response.json()["detail"]
 
 
 def test_auth_me_without_token():
@@ -149,18 +531,28 @@ def test_conversation_scoped_to_user():
 
 
 def test_chat_auto_creates_conversation_and_records_messages():
+    _CANONICAL = {
+        "answer": "A sample grounded answer",
+        "citations": [],
+        "citation_accuracy": 1.0,
+        "groundedness": True,
+    }
+
     user = create_user_and_token()
     headers = {"Authorization": f"Bearer {user['token']}"}
 
-    # No conversation_id -> auto-created.
-    response = client.post(
-        "/chat",
-        json={"question": "Hello there"},
-        headers=headers,
-    )
+    with mock.patch(
+        "app.api.routes.chat.run_rag_pipeline", return_value=dict(_CANONICAL)
+    ):
+        # No conversation_id -> auto-created.
+        response = client.post(
+            "/chat",
+            json={"question": "Hello there"},
+            headers=headers,
+        )
     assert response.status_code == 200
     body = response.json()
-    assert "answer" in body
+    assert body["answer"] == _CANONICAL["answer"]
     assert body["conversation_id"] is not None
 
     conversation_id = body["conversation_id"]
@@ -181,6 +573,13 @@ def test_chat_auto_creates_conversation_and_records_messages():
 
 
 def test_chat_uses_provided_conversation_id():
+    _CANONICAL = {
+        "answer": "A sample grounded answer",
+        "citations": [],
+        "citation_accuracy": 1.0,
+        "groundedness": True,
+    }
+
     user = create_user_and_token()
     headers = {"Authorization": f"Bearer {user['token']}"}
 
@@ -190,11 +589,14 @@ def test_chat_uses_provided_conversation_id():
         headers=headers,
     ).json()["id"]
 
-    response = client.post(
-        "/chat",
-        json={"question": "Follow up question", "conversation_id": conversation_id},
-        headers=headers,
-    )
+    with mock.patch(
+        "app.api.routes.chat.run_rag_pipeline", return_value=dict(_CANONICAL)
+    ):
+        response = client.post(
+            "/chat",
+            json={"question": "Follow up question", "conversation_id": conversation_id},
+            headers=headers,
+        )
     assert response.status_code == 200
     assert response.json()["conversation_id"] == conversation_id
 
@@ -232,7 +634,7 @@ def _sample_pdf_bytes():
         b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
         b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
         b"4 0 obj\n<< /Length 44 >>\nstream\nBT /F1 24 Tf 72 720 Td "
-        b"(AskDocs sample document) Tj ET\nendstream\nendobj\n"
+        b"(Docly sample document) Tj ET\nendstream\nendobj\n"
         b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"
         b"xref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n"
         b"0000000058 00000 n \n0000000115 00000 n \n0000000247 00000 n \n"

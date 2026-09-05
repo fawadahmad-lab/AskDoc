@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { ArrowUp, Sparkles } from "lucide-react";
+import { ArrowUp, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useDocuments } from "./use-documents";
+import { toast } from "sonner";
 
 export function Composer({
   onSend,
@@ -14,8 +16,26 @@ export function Composer({
 }) {
   const [value, setValue] = React.useState("");
   const ref = React.useRef<HTMLTextAreaElement>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+  const { upload, isUploading } = useDocuments();
 
   const canSend = value.trim().length > 0 && !disabled;
+
+  function handleFile(file: File | undefined | null) {
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      toast.error("Only PDF files are supported");
+      return;
+    }
+    upload(file, {
+      onSuccess: () => {
+        toast.success("Document uploaded & indexed");
+        if (fileRef.current) fileRef.current.value = "";
+      },
+      onError: (err) =>
+        toast.error(err instanceof Error ? err.message : "Upload failed"),
+    });
+  }
 
   function autoResize() {
     const el = ref.current;
@@ -39,7 +59,12 @@ export function Composer({
 
   return (
     <div className="w-full max-w-3xl">
-      <div className="group relative rounded-2xl border border-border bg-card shadow-[var(--shadow-softer)] transition-shadow focus-within:border-primary/50 focus-within:shadow-[var(--shadow-glow)]">
+      <div
+        className={cn(
+          "relative flex flex-col rounded-2xl border border-input bg-card shadow-[var(--shadow-softer)] transition-shadow",
+          "focus-within:border-ring/60 focus-within:shadow-[var(--shadow-glow)]"
+        )}
+      >
         <textarea
           ref={ref}
           value={value}
@@ -55,20 +80,36 @@ export function Composer({
               submit();
             }
           }}
-          className="scrollbar-thin block max-h-[200px] w-full resize-none bg-transparent px-4 pb-2 pt-4 pr-14 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none"
+          className="scrollbar-thin block max-h-[200px] w-full resize-none bg-transparent px-4 pt-4 pb-12 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none"
         />
-        <div className="flex items-center justify-between border-t px-3 py-2">
-          <span className="flex items-center gap-1.5 pl-1 text-[11px] text-muted-foreground">
-            <Sparkles className="size-3.5 text-primary/70" />
-            Grounded, cited answers
-          </span>
+        <div className="absolute bottom-2.5 left-2.5">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/pdf"
+            className="hidden"
+            onChange={(e) => handleFile(e.target.files?.[0])}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={disabled || isUploading}
+            aria-label={isUploading ? "Uploading document" : "Upload a document"}
+            className="flex size-8 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground enabled:cursor-pointer disabled:opacity-50"
+          >
+            <Plus className="size-5" />
+          </button>
+        </div>
+        <div className="absolute bottom-2 right-2">
           <Button
             size="icon"
             onClick={submit}
             disabled={!canSend}
             className={cn(
               "size-9 rounded-xl transition-all",
-              canSend ? "bg-primary text-primary-foreground hover:bg-primary/85" : ""
+              canSend
+                ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+                : ""
             )}
             aria-label="Send message"
           >

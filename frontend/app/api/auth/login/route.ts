@@ -11,8 +11,10 @@ const COOKIE_OPTIONS = {
   path: "/",
 };
 
+const DAYS = 24 * 60 * 60;
+
 export async function POST(request: NextRequest) {
-  let body: { username?: string; password?: string };
+  let body: { username?: string; password?: string; remember?: boolean };
   try {
     body = await request.json();
   } catch {
@@ -31,9 +33,12 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const remember = body?.remember === true;
+
   const form = new URLSearchParams();
   form.append("username", username);
   form.append("password", password);
+  form.append("remember_me", remember ? "true" : "false");
 
   const res = await backendFetch("/auth/login", {
     method: "POST",
@@ -66,6 +71,9 @@ export async function POST(request: NextRequest) {
   const user = (await me.json()) as UserResponse;
 
   const response = NextResponse.json({ user }, { status: 200 });
-  response.cookies.set(TOKEN_COOKIE, tokenRes.access_token, COOKIE_OPTIONS);
+  response.cookies.set(TOKEN_COOKIE, tokenRes.access_token, {
+    ...COOKIE_OPTIONS,
+    maxAge: remember ? 30 * DAYS : undefined,
+  });
   return response;
 }

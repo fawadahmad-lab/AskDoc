@@ -1,168 +1,107 @@
-# AskDocs
+# Document RAG API
 
-**Ask questions about your documents and get grounded, page-cited answers.**
+A multi-tenant **Document Q&A** application: upload a PDF, ask questions, and get
+answers grounded only in your own documents — with page citations.
 
-AskDocs is a full-stack Retrieval-Augmented Generation (RAG) application. Upload a PDF, ask a question in natural language, and get an answer generated strictly from the document's content — with citations pointing back to the exact page it came from.
+- **Backend**: FastAPI + SQLAlchemy (PostgreSQL) + Redis + ChromaDB
+- **AI**: Retrieval-Augmented Generation (retrieval → cross-encoder rerank → grounded LLM generation)
+- **Frontend**: Next.js / React
+- **Evaluation**: RAGAS harness with a separate judge model
+- **Observability**: Langfuse tracing
 
-![Python](https://img.shields.io/badge/Backend-FastAPI-009688?logo=fastapi&logoColor=white)
-![Next.js](https://img.shields.io/badge/Frontend-Next.js-000000?logo=next.js&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/DB-PostgreSQL-336791?logo=postgresql&logoColor=white)
-![Redis](https://img.shields.io/badge/Cache-Redis-DC382D?logo=redis&logoColor=white)
-![ChromaDB](https://img.shields.io/badge/Vector%20Store-ChromaDB-6E56CF)
-![Status](https://img.shields.io/badge/Status-Local%20Dev-yellow)
+## Highlight features
 
----
-
-## Overview
-
-Most chat-with-your-PDF tools either hallucinate answers or return generic summaries with no way to verify where the information came from. AskDocs is built around **grounding and auditability**: every answer is generated only from retrieved document chunks, and every response carries the page number(s) it was derived from.
-
-The system is split into two pipelines — **ingestion** (get a document ready to be searched) and **query** (turn a question into a cited answer) — sitting behind a secure, cookie-based auth layer.
+- 🔐 Multi-tenant auth (JWT) — users only ever see their own docs, conversations, and messages
+- 📄 PDF ingestion: extract → chunk → embed → index into a per-user vector store
+- 🧠 Grounded answers with **citations** to source pages; refuses out-of-domain questions
+- ⚡ Redis-cached AI responses (deterministic key, TTL)
+- 💬 Chat history (last 5 turns) injected into the prompt
+- 📊 RAGAS evaluation: relevancy, correctness, similarity, faithfulness — with per-question audit
+- 📈 Langfuse traces for every pipeline stage
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    subgraph Client["Browser"]
-        UI["Next.js UI"]
-    end
-    subgraph BFF["Next.js Route Handlers (BFF)"]
-        RH["Server-side API Proxy<br/>httpOnly cookie auth"]
-    end
-    subgraph Backend["FastAPI Backend"]
-        Auth["/auth"]
-        ChatAPI["/chat"]
-        DocAPI["/documents"]
-        ConvAPI["/conversations"]
-    end
-    subgraph Data["Data Layer"]
-        PG[("PostgreSQL")]
-        Redis[("Redis Cache")]
-        Chroma[("ChromaDB")]
-    end
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for the full architecture diagram
+and request-flow sequence diagrams (RAG pipeline, evaluation harness, and full-stack
+data layer).
 
-    UI --> RH
-    RH --> Auth
-    RH --> ChatAPI
-    RH --> DocAPI
-    RH --> ConvAPI
-    ChatAPI --> Redis
-    ChatAPI --> Chroma
-    ChatAPI --> PG
-    DocAPI --> PG
-    ConvAPI --> PG
-```
+Two Groq-hosted models power the system:
 
-The browser never talks to the backend directly. Next.js Route Handlers act as a **Backend-for-Frontend (BFF)**: the JWT issued at login is stored in an `httpOnly`, `Secure` cookie and attached server-side on every proxied request. This removes the token from client-accessible JavaScript entirely and avoids the need for CORS.
+| Setting | Model | Role |
+|---|---|---|
+| `GROQ_MODEL` | `openai/gpt-oss-20b` | RAG generation (produces answers) |
+| `RAGAS_EVALUATION_MODEL` | `openai/gpt-oss-120b` | RAGAS judge (scores answers offline) |
 
-### Ingestion pipeline
-
-```mermaid
-flowchart LR
-    A[PDF Upload] --> B[Extract text per page]
-    B --> C[Chunk text<br/>tagged with user_id + document_id]
-    C --> D[Embed chunks<br/>MiniLM, 384-dim, L2-normalized]
-    D --> E[Index into ChromaDB<br/>persistent collection]
-```
-
-Each chunk is tagged with `user_id` and `document_id` at index time, which becomes the tenant-isolation boundary at query time.
-
-### Query pipeline
-
-```mermaid
-flowchart LR
-    Q[User question] --> Cache{Redis cache hit?}
-    Cache -- yes --> R[Return cached answer]
-    Cache -- no --> Embed[Embed question]
-    Embed --> Retrieve["Vector search (top 10)<br/>filtered by user_id / document_id"]
-    Retrieve --> Rerank["Cross-encoder rerank<br/>(top 5)"]
-    Rerank --> Gen["Grounded generation<br/>via LLM, context-only prompt"]
-    Gen --> Cite[Extract page-level citations]
-    Cite --> Persist[Persist Q&A to conversation]
-```
-
-**Why retrieve → rerank → generate:** vector search alone is fast but imprecise; a cross-encoder reranker re-scores the top candidates against the exact question for much higher relevance before they ever reach the LLM. The generation prompt is explicitly constrained to answer *only* from the retrieved context, and to say so when the answer isn't present — this is what keeps citations meaningful instead of decorative.
-
-## Features
-
-- **Grounded Q&A** — answers are generated only from retrieved document content, with page-level citations attached.
-- **Multi-turn conversations** — chat history is persisted per conversation (PostgreSQL) and fed back into the generation prompt for context-aware follow-ups.
-- **Document library** — upload, preview, and delete PDFs independently of any conversation.
-- **Response caching** — identical questions (per user, per document) are served from Redis within a short TTL, skipping the full retrieval-rerank-generate pipeline.
-- **Tenant isolation** — every vector search and database query is scoped by `user_id`, enforced at the retrieval layer, not just the API layer.
-- **Secure auth** — JWT issued on login, stored only in an httpOnly cookie, never exposed to client-side JavaScript.
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js (App Router), Route Handlers as BFF |
-| Backend | FastAPI, Python |
-| Relational DB | PostgreSQL (users, documents, conversations, messages) |
-| Vector Store | ChromaDB (persistent collection) |
-| Cache | Redis (response caching, SHA-256 keyed, TTL-based) |
-| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` |
-| Reranking | `cross-encoder/ms-marco-MiniLM-L-6-v2` |
-| LLM | Groq (`openai/gpt-oss-20b`) |
-| Auth | JWT via httpOnly cookies (form-urlencoded login) |
-
-## Getting Started
-
-> Adjust environment variable names and commands below to match your local `.env` and scripts.
+## Quick start
 
 ```bash
-# clone
-git clone https://github.com/<your-username>/askdocs.git
-cd askdocs
+# 1) Configure secrets (never commit .env*)
+cp .env.example .env           # edit with your local creds
+# Local docker: also create .env.docker (see docker-compose.yml) — gitignored
 
-# backend
-cd backend
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn main:app --reload
+# 2) Backend (local: Postgres on :5433, Redis on :6379)
+docker compose up --build      # runs alembic migrations + uvicorn :8000
+# or, without Docker:
+uvicorn app.main:app --reload  # requires local Postgres/Redis
 
-# frontend
-cd ../frontend
-npm install
-npm run dev
+# 3) Frontend
+cd frontend && cp .env.example .env.local   # BACKEND_URL=http://localhost:8000
+npm install && npm run dev
 ```
 
-Required environment variables typically include a Postgres connection string, a Redis URL, a Groq API key, and a JWT signing secret — see `.env.example` in each service.
+## Deployment
 
-## Project Structure
+Production topology: **Vercel** (Next.js) → **Railway** (FastAPI, migrations,
+ChromaDB) with **Supabase** Postgres and a managed **Redis** (Railway plugin or
+Upstash). No web servers to operate yourself — the BFF runs inside Next.js, so the
+browser only ever talks to one origin.
 
+### 1. Supabase (database)
+1. Create a project; open **Project Settings → Database**.
+2. Copy the **Session pooler** connection string (port 5432) — this is `DATABASE_URL`.
+3. Leave the schema to the app: migrations run automatically on Railway boot.
+
+### 2. Railway (backend)
+1. Create a project → **Deploy from GitHub repo** (the `Dockerfile` is detected) OR
+   deploy the `ghcr.io` image CI already pushes.
+2. Add a **Volume** and mount it at `/app/chroma_db` (embeddings/vector store)
+   and `/app/uploads` (uploaded PDFs).
+3. Add a **Redis** plugin and copy its URL.
+4. Set these **Variables** (all gitignored secrets MUST be entered here):
+
+   | Variable | Value |
+   |---|---|
+   | `ENVIRONMENT` | `production` |
+   | `DATABASE_URL` | Supabase Session pooler string |
+   | `REDIS_URL` | Railway Redis plugin URL |
+   | `SECRET_KEY` | `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
+   | `ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
+   | `FRONTEND_URL` | `https://<your-app>.vercel.app` |
+   | `CORS_ORIGINS` | `https://<your-app>.vercel.app` |
+   | `TRUSTED_HOSTS` | `<your-app>.up.railway.app` (+ custom domain) |
+   | `EMAIL_SMTP_USER` / `EMAIL_SMTP_PASSWORD` | Gmail + App Password (required: verify/reset emails) |
+   | `GROQ_API_KEY` | optional, dev/eval fallback only |
+   | `ALLOWED_EMAIL_DOMAINS` | e.g. `gmail.com` |
+
+   Healthcheck is configured via `railway.json` (`/health`); startup runs
+   `alembic upgrade head` before serving, and Uvicorn honors Railway's `PORT`.
+   Client IPs for rate limiting are read through Railway's proxy
+   (`--proxy-headers`).
+
+### 3. Vercel (frontend)
+1. Import the `frontend/` directory as a Next.js project.
+2. Add one **Environment Variable**: `BACKEND_URL` → your Railway URL
+   (`https://<your-app>.up.railway.app`). It's read server-side only — never
+   `NEXT_PUBLIC_*`.
+3. Deploy. CI (`ci.yml`) already fails on lint/type errors; type-check + build
+   run on every push.
+
+## Evaluation
+
+```bash
+MAX_EVALUATION_SAMPLES=1 ./venv/bin/python -m app.evaluation.run_evaluation   # smoke
+./venv/bin/python -m app.evaluation.run_evaluation                            # full run
 ```
-backend/
-  main.py            # FastAPI app, route definitions
-  models.py          # SQLAlchemy models (User, Document, Conversation, Message)
-  schemas.py         # Pydantic request/response schemas
-  ai/
-    embeddings.py     # MiniLM embedding generation
-    retrieval.py      # Chroma indexing + vector search
-    reranker.py       # Cross-encoder reranking
-    generation.py     # Prompt construction + grounded generation
-    llm_client.py     # Groq client
-    cache.py          # Redis response cache
-    conversation.py   # Conversation/message persistence
-  services/
-    pdf_service.py    # PDF text extraction
-    chunker.py        # Text chunking
 
-frontend/
-  app/
-    api/               # Next.js Route Handlers (BFF layer)
-    chat/              # Chat UI, sidebar, document library
-  lib/
-    api.ts             # Typed API client
-```
-
-## Roadmap
-
-- [ ] Deploy backend + frontend (currently local-only)
-- [ ] Streaming responses (SSE) instead of single-shot JSON replies
-- [ ] Cross-document question answering
-- [ ] Automated eval suite for citation accuracy at scale
-
-## License
-
-MIT — see [LICENSE](LICENSE) for details.
+Results are written to `evaluation_results/ragas_metrics.json` (summary + per-question audit).
+`MAX_EVALUATION_SAMPLES` (0 = all) is overridable from the shell and takes precedence over `.env`.

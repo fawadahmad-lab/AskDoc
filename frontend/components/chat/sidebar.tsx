@@ -3,15 +3,18 @@
 import * as React from "react";
 import {
   Check,
+  ChevronDown,
   Library,
   LogOut,
   MessageSquare,
   MessageSquarePlus,
   MoreHorizontal,
   Pencil,
+  Settings,
   Trash2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 import { Button } from "@/components/ui/button";
@@ -37,12 +40,11 @@ import type { User } from "@/lib/auth";
 export function Sidebar({
   collapsed,
   onToggle,
-  onOpenLibrary,
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  onOpenLibrary: () => void;
 }) {
+  const [historyOpen, setHistoryOpen] = React.useState(true);
   return (
     <aside
       className={cn(
@@ -50,7 +52,12 @@ export function Sidebar({
         collapsed ? "w-[68px]" : "w-72"
       )}
     >
-      <SidebarInner collapsed={collapsed} onToggle={onToggle} onOpenLibrary={onOpenLibrary} />
+      <SidebarInner
+        collapsed={collapsed}
+        onToggle={onToggle}
+        historyOpen={historyOpen}
+        onHistoryToggle={() => setHistoryOpen((o) => !o)}
+      />
     </aside>
   );
 }
@@ -58,11 +65,13 @@ export function Sidebar({
 export function SidebarInner({
   collapsed,
   onToggle,
-  onOpenLibrary,
+  historyOpen,
+  onHistoryToggle,
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  onOpenLibrary: () => void;
+  historyOpen: boolean;
+  onHistoryToggle: () => void;
 }) {
   const {
     startNewChat,
@@ -93,8 +102,10 @@ export function SidebarInner({
         </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={onOpenLibrary}>
-              <Library className="size-5" />
+            <Button variant="ghost" size="icon" asChild>
+              <Link href="/library" aria-label="Library">
+                <Library className="size-5" />
+              </Link>
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">Library</TooltipContent>
@@ -118,24 +129,16 @@ export function SidebarInner({
         <SidebarToggleButton onToggle={onToggle} label="Collapse sidebar" />
         <div className="min-w-0 flex-1">
           <p className="font-heading truncate text-[15px] font-semibold">
-            Ask<span className="text-primary">Docs</span>
+            Doc<span className="text-primary">ly</span>
           </p>
           <p className="truncate text-xs text-muted-foreground">
             Document Q&amp;A
           </p>
         </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon-sm" onClick={onOpenLibrary} aria-label="Open library">
-              <Library className="size-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">Library</TooltipContent>
-        </Tooltip>
       </div>
 
       <div className="px-3">
-        <Button className="w-full justify-between" onClick={startNewChat}>
+        <Button className="w-full justify-between rounded-xl" onClick={startNewChat}>
           <span className="flex items-center gap-2">
             <MessageSquarePlus className="size-4" />
             New chat
@@ -146,14 +149,33 @@ export function SidebarInner({
         </Button>
       </div>
 
-      <div className="mt-6 flex items-center justify-between px-4">
-        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <nav className="mt-4 px-3">
+        <LibraryNavItem href="/library" label="Library" />
+      </nav>
+
+      <button
+        onClick={onHistoryToggle}
+        aria-expanded={historyOpen}
+        aria-controls="conversation-list"
+        className="mt-4 flex w-full items-center justify-between px-4 py-1 text-left transition-colors hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           <MessageSquare className="size-3.5" />
           Conversations
-        </div>
-      </div>
+        </span>
+        <ChevronDown
+          className={cn(
+            "size-4 text-muted-foreground transition-transform",
+            historyOpen ? "" : "-rotate-90"
+          )}
+        />
+      </button>
 
-      <ScrollArea className="mt-2 min-h-0 flex-1 px-3">
+      {historyOpen && (
+        <ScrollArea
+          id="conversation-list"
+          className="mt-2 min-h-0 flex-1 px-3"
+        >
         {isLoadingConversations ? (
           <div className="space-y-2 px-1">
             {[0, 1, 2].map((i) => (
@@ -181,13 +203,14 @@ export function SidebarInner({
             ))}
           </div>
         )}
-      </ScrollArea>
+        </ScrollArea>
+      )}
 
       <Separator />
-      <div className="flex items-center gap-2 px-3 py-3">
+      <div className="flex items-center gap-1 px-3 py-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-sidebar-accent">
+            <button className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
               <UserAvatar user={user} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">
@@ -203,6 +226,21 @@ export function SidebarInner({
         </DropdownMenu>
       </div>
     </div>
+  );
+}
+
+function LibraryNavItem({ href, label }: { href: string; label: string }) {
+  return (
+    <Button
+      variant="ghost"
+      asChild
+      className="w-full justify-start gap-2.5 rounded-xl text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+    >
+      <Link href={href}>
+        <Library className="size-4" />
+        {label}
+      </Link>
+    </Button>
   );
 }
 
@@ -427,6 +465,12 @@ function UserMenu({
         </p>
       </DropdownMenuLabel>
       <DropdownMenuSeparator />
+      <DropdownMenuItem asChild>
+        <Link href="/settings">
+          <Settings className="size-4" />
+          Settings
+        </Link>
+      </DropdownMenuItem>
       <DropdownMenuItem onClick={onLogout} className="text-destructive focus:text-destructive">
         <LogOut className="size-4" />
         Sign out

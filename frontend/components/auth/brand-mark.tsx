@@ -26,7 +26,7 @@ export function BrandMark({ className }: { className?: string }) {
 export function BrandWordmark({ className }: { className?: string }) {
   return (
     <span className={cn("font-heading text-xl font-semibold tracking-tight", className)}>
-      Ask<span className="text-primary">Docs</span>
+      Doc<span className="text-primary">ly</span>
     </span>
   );
 }

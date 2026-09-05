@@ -10,4 +10,7 @@ export type User = {
   id: number;
   email: string;
   username: string;
+  has_groq_api_key: boolean;
+  groq_api_key_masked: string | null;
+  is_email_verified: boolean;
 };

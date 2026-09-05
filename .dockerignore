@@ -1,9 +1,27 @@
+# Version control
+.git/
+.github/
+
+# Secrets — never bake into the image. Compose passes them via env_file.
+.env*
+.encryption_key
+
+# Local dev / tooling
 venv/
+node_modules/
 __pycache__/
 *.pyc
-.git/
-.env
 .pytest_cache/
 .mypy_cache/
 .idea/
 .vscode/
+.coverage
+tsconfig.tsbuildinfo
+
+# The Next.js app is deployed to Vercel, not into this image.
+frontend/
+
+# Runtime data — mounted as volumes at deploy time.
+chroma_db/
+uploads/
+evaluation_results/
