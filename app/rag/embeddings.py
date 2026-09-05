@@ -6,7 +6,21 @@ from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
 
-_model = SentenceTransformer(settings.EMBEDDING_MODEL)
+
+# Load the embedding model lazily.
+# This prevents model downloads/loading during application import and pytest
+# collection. The model is created only when embeddings are actually needed.
+_model: SentenceTransformer | None = None
+
+
+def _get_model() -> SentenceTransformer:
+    """Load the embedding model lazily on first use."""
+    global _model
+
+    if _model is None:
+        _model = SentenceTransformer(settings.EMBEDDING_MODEL)
+
+    return _model
 
 
 def generate_embeddings(text) -> List[List[float]]:
@@ -18,7 +32,7 @@ def generate_embeddings(text) -> List[List[float]]:
     if not text:
         return []
 
-    embeddings = _model.encode(
+    embeddings = _get_model().encode(
         text,
         normalize_embeddings=True,
     )

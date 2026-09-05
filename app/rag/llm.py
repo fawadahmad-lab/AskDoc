@@ -6,12 +6,14 @@ from functools import lru_cache
 from langchain_core.messages import HumanMessage
 from langchain_groq import ChatGroq
 from langfuse import observe
+
 from app.core.config import settings
+
 
 # Defensive: strip any reasoning/thinking preamble that still leaks into the
 # content (e.g. models/settings where reasoning cannot be fully disabled).
 _THINKING_PRELUDE = re.compile(
-    r"^\s*(?:<?/?thinking>|thinking|reasoning)\s*[\n:]*",
+    r"^\s*(?:<?/?thinking>|thinking|reasoning)\s*[*\n:]*",
     re.IGNORECASE,
 )
 
@@ -25,13 +27,16 @@ def _chat_params(model: str) -> dict:
     to keep thinking out of `content`. Anything else gets plain defaults.
     """
     lower = model.lower()
+
     if "gpt-oss" in lower:
         return {"reasoning_format": "hidden"}
+
     if "qwen" in lower:
         # qwen3 reasoning models otherwise emit their chain-of-thought inside
         # `content`, polluting every generated answer with a "thinking process"
         # preamble.
         return {"reasoning_effort": "none"}
+
     return {}
 
 
@@ -50,10 +55,32 @@ def create_llm(api_key: str, model: str) -> ChatGroq:
     )
 
 
-# Module-level fallback keyed to the deployment's Groq key. Used by the
-# development/evaluation harness when no per-user key is available; the
-# product path always passes the authenticated user's own key.
-_llm = create_llm(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
+# Module-level fallback keyed to the deployment's Groq key.
+# Used by the development/evaluation harness when no per-user key is
+# available. The product path always passes the authenticated user's own key.
+#
+# IMPORTANT: This is intentionally lazy so importing the application does not
+# require GROQ_API_KEY to be configured.
+_llm: ChatGroq | None = None
+
+
+def _get_llm() -> ChatGroq:
+    """Build the deployment fallback LLM lazily."""
+    global _llm
+
+    if _llm is None:
+        if not settings.GROQ_API_KEY:
+            raise RuntimeError(
+                "GROQ_API_KEY is not set; cannot build the fallback LLM. "
+                "Pass an authenticated user's key or set GROQ_API_KEY."
+            )
+
+        _llm = create_llm(
+            api_key=settings.GROQ_API_KEY,
+            model=settings.GROQ_MODEL,
+        )
+
+    return _llm
 
 
 @observe(
@@ -63,12 +90,18 @@ _llm = create_llm(api_key=settings.GROQ_API_KEY, model=settings.GROQ_MODEL)
 def generate_answer(prompt: str, api_key: str | None = None) -> str:
     """Generate an answer using the user's Groq key (or the app fallback)."""
     llm = (
-        create_llm(api_key=api_key, model=settings.GROQ_MODEL)
+        create_llm(
+            api_key=api_key,
+            model=settings.GROQ_MODEL,
+        )
         if api_key
-        else _llm
+        else _get_llm()
     )
+
     messages = [HumanMessage(content=prompt)]
     response = llm.invoke(messages)
+
     text = response.content.strip()
     text = _THINKING_PRELUDE.sub("", text).strip()
+
     return text
