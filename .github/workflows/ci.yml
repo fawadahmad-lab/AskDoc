@@ -57,7 +57,7 @@ jobs:
           pip show starlette
           pip show fastapi
 
-            - name: Wait for services
+      - name: Wait for services
         run: |
           python - <<'EOF'
           import socket
